@@ -34,7 +34,6 @@ export function generateZephyrJwt(
 
   // JWT claims
   const payload = {
-    sub: process.env.ZAPI_ACCOUNT_ID, // Atlassian account ID
     iss: process.env.ZAPI_ACCESS_KEY, // Zephyr Access Key
     qsh, // query-string hash
     iat: now,
