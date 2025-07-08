@@ -1,5 +1,8 @@
 # JIRA MCP Integration
 
+[![Certified by MCP Hub](https://img.shields.io/badge/Certified-MCP%20Hub-blue)](https://mcphub.com/mcp-servers/mankowskinick/jira-mcp)
+[![MIT License](https://img.shields.io/npm/l/jira-mcp)](LICENSE)
+
 A [Model Context Protocol](https://www.anthropic.com/news/model-context-protocol) server for integrating JIRA with Claude. This tool allows Claude to create JIRA tickets directly within your conversations.
 
 ## Overview
