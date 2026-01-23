@@ -35,3 +35,13 @@ Thumbs.db
 jira-mcp-config-template.json
 merged-jira-mcp-config.json
 jira-mcp-minimal-config.json
+
+# Utility scripts with proprietary data (3E/AIPHS specific)
+/scripts/jira-mcp-wrapper.js
+ValidationEpic.md
+
+# Root-level utility scripts (project-specific)
+/*.js
+/*.mjs
+!/jest.config.js
+!/eslint.config.js

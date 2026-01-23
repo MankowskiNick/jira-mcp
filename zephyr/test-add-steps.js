@@ -217,28 +217,36 @@ async function addTestSteps(ticketKey, steps) {
     return results;
 }
 
-// Test data
-const ticketKey = "DEMO-123";
+// Test data - Example test steps for a Test issue type
+// Usage: Set TICKET_KEY environment variable or pass as command line argument
+// Example: TICKET_KEY=PROJECT-123 node test-add-steps.js
+// Example: node test-add-steps.js PROJECT-123
+const ticketKey = process.argv[2] || process.env.TICKET_KEY || "PROJECT-123";
 const steps = [
     {
-        step: "Navigate to the application homepage",
-        data: "Use the development environment URL",
-        result: "Page loads successfully"
+        step: "Verify user can log in with valid credentials",
+        data: "username: testuser, password: valid",
+        result: "User is redirected to dashboard"
     },
     {
-        step: "Verify that the Terms of Service overlay displays correctly",
-        data: "Check the overlay content and styling",
-        result: "ToS overlay displays with correct content"
+        step: "Verify error message for invalid credentials",
+        data: "username: testuser, password: invalid",
+        result: "Error message 'Invalid credentials' is displayed"
     },
     {
-        step: "Click the Accept button",
-        data: "Click the primary action button",
-        result: "Button click is registered"
+        step: "Verify session timeout after inactivity",
+        data: "Wait 30 minutes without activity",
+        result: "User is logged out and redirected to login page"
     },
     {
-        step: "Verify that the Terms of Service are accepted and the overlay is closed",
-        data: "Check the UI state after clicking Accept",
-        result: "ToS overlay is closed and acceptance is recorded"
+        step: "Verify password reset functionality",
+        data: "Click 'Forgot Password' link",
+        result: "Password reset email is sent"
+    },
+    {
+        step: "Verify logout functionality",
+        data: "Click logout button",
+        result: "User is logged out and session is cleared"
     }
 ];
 

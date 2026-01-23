@@ -1,7 +1,7 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-import { getZephyrTestSteps, getJiraIssueId } from './build/get-zephyr-test-steps.js';
+import { getZephyrTestSteps, getJiraIssueId } from '../build/get-zephyr-test-steps.js';
 
 // Main function to get test steps from a ticket
 async function getTestSteps(ticketKey) {
@@ -59,7 +59,10 @@ async function getTestSteps(ticketKey) {
 }
 
 // Run the test with the specified ticket key
-const ticketKey = 'DEMO-123';
+// Usage: Set TICKET_KEY environment variable or pass as command line argument
+// Example: TICKET_KEY=PROJECT-123 node test-get-steps.js
+// Example: node test-get-steps.js PROJECT-123
+const ticketKey = process.argv[2] || process.env.TICKET_KEY || 'PROJECT-123';
 getTestSteps(ticketKey)
     .then(steps => {
         if (steps) {

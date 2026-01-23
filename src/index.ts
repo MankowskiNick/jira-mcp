@@ -1,5 +1,23 @@
 import dotenv from "dotenv";
-dotenv.config();
+import path from "path";
+import { fileURLToPath } from "url";
+
+// Get the directory of the current module
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Load .env from the project root (parent of src or build directory)
+const envPath = path.resolve(__dirname, "..", ".env");
+console.error(`[JIRA-MCP] Loading .env from: ${envPath}`);
+const result = dotenv.config({ path: envPath });
+if (result.error) {
+  console.error(`[JIRA-MCP] Error loading .env:`, result.error);
+} else {
+  console.error(`[JIRA-MCP] .env loaded successfully`);
+}
+console.error(`[JIRA-MCP] JIRA_HOST: ${process.env.JIRA_HOST || 'NOT SET'}`);
+console.error(`[JIRA-MCP] JIRA_USERNAME: ${process.env.JIRA_USERNAME ? 'SET' : 'NOT SET'}`);
+console.error(`[JIRA-MCP] JIRA_API_TOKEN: ${process.env.JIRA_API_TOKEN ? 'SET' : 'NOT SET'}`);
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -57,9 +75,13 @@ type JiraSearchResponse = {
       [key: string]: any; // Allow for custom fields
     };
   }>;
+  // Legacy pagination fields (may still be present for backward compatibility)
   total?: number;
   maxResults?: number;
   startAt?: number;
+  // New pagination fields for /search/jql endpoint
+  isLast?: boolean;
+  nextPageToken?: string;
 };
 
 type ZephyrAddTestStepResponse = {
@@ -82,11 +104,6 @@ function generateZephyrJwt(
   queryParams: Record<string, string> = {},
   expirationSec: number = 3600
 ): string {
-  // Zephyr base URL from environment variable
-  const zephyrBase = (
-    process.env.ZAPI_BASE_URL || "https://prod-api.zephyr4jiracloud.com/connect"
-  ).replace(/\/$/, "");
-
   // Sort query parameters alphabetically
   const canonicalQuery = Object.keys(queryParams)
     .sort()
@@ -361,6 +378,141 @@ async function createJiraTicket(
         response.statusText
       );
 
+      // Check if it's a custom field validation error
+      if (response.status === 400 && responseData.errors) {
+        const productField = process.env.JIRA_PRODUCT_FIELD;
+        const categoryField = process.env.JIRA_CATEGORY_FIELD;
+
+        // Check if the error is related to product field
+        const hasProductFieldError = productField && responseData.errors[productField];
+        const hasCategoryFieldError = categoryField && responseData.errors[categoryField];
+
+        // Handle required product field error specially
+        if (hasProductFieldError) {
+          const errorMessage = responseData.errors[productField];
+          console.log(`Product field error: ${errorMessage}`);
+
+          // Try alternative formats for the product field
+          const productValue = process.env.JIRA_PRODUCT_VALUE;
+          const productId = process.env.JIRA_PRODUCT_ID;
+
+          if (productValue && productId) {
+            console.log("Retrying with alternative product field formats...");
+
+            // Try format 1: Just the ID as string
+            let retryPayload = JSON.parse(JSON.stringify(payload));
+            retryPayload.fields[productField] = productId;
+
+            let retryResponse = await fetch(jiraUrl, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Basic ${auth}`,
+              },
+              body: JSON.stringify(retryPayload),
+            });
+
+            if (retryResponse.ok) {
+              const retryResponseData = (await retryResponse.json()) as JiraCreateResponse;
+              console.log("Ticket created successfully with product field as ID string");
+              return { success: true, data: retryResponseData };
+            }
+
+            // Try format 2: Array with just ID
+            retryPayload = JSON.parse(JSON.stringify(payload));
+            retryPayload.fields[productField] = [{ id: productId }];
+
+            retryResponse = await fetch(jiraUrl, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Basic ${auth}`,
+              },
+              body: JSON.stringify(retryPayload),
+            });
+
+            if (retryResponse.ok) {
+              const retryResponseData = (await retryResponse.json()) as JiraCreateResponse;
+              console.log("Ticket created successfully with product field as array with ID");
+              return { success: true, data: retryResponseData };
+            }
+
+            // Try format 3: Array with just value
+            retryPayload = JSON.parse(JSON.stringify(payload));
+            retryPayload.fields[productField] = [{ value: productValue }];
+
+            retryResponse = await fetch(jiraUrl, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Basic ${auth}`,
+              },
+              body: JSON.stringify(retryPayload),
+            });
+
+            if (retryResponse.ok) {
+              const retryResponseData = (await retryResponse.json()) as JiraCreateResponse;
+              console.log("Ticket created successfully with product field as array with value");
+              return { success: true, data: retryResponseData };
+            }
+
+            console.log("All product field format retries failed");
+          }
+
+          // If all retries fail and it's a required field, return helpful error
+          if (errorMessage.toLowerCase().includes('required')) {
+            console.error(`Required product field ${productField} validation failed with all formats.`);
+            console.error('Current configuration:');
+            console.error('- JIRA_PRODUCT_FIELD:', process.env.JIRA_PRODUCT_FIELD);
+            console.error('- JIRA_PRODUCT_VALUE:', process.env.JIRA_PRODUCT_VALUE);
+            console.error('- JIRA_PRODUCT_ID:', process.env.JIRA_PRODUCT_ID);
+
+            return {
+              success: false,
+              data: responseData,
+              errorMessage: `Required field validation failed: ${errorMessage}. The product ID "${productId}" or value "${productValue}" may be invalid for your JIRA instance.`
+            };
+          }
+        }
+
+        // For non-required field errors, try removing them
+        if ((hasProductFieldError && !responseData.errors[productField].toLowerCase().includes('required')) || hasCategoryFieldError) {
+          console.log("Retrying ticket creation without problematic custom fields...");
+
+          // Create a new payload without the problematic custom fields
+          const retryPayload = JSON.parse(JSON.stringify(payload));
+
+          if (hasProductFieldError && !responseData.errors[productField].toLowerCase().includes('required')) {
+            delete retryPayload.fields[productField];
+            console.log(`Removed problematic product field: ${productField}`);
+          }
+
+          if (hasCategoryFieldError) {
+            delete retryPayload.fields[categoryField];
+            console.log(`Removed problematic category field: ${categoryField}`);
+          }
+
+          // Retry the request
+          const retryResponse = await fetch(jiraUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Basic ${auth}`,
+            },
+            body: JSON.stringify(retryPayload),
+          });
+
+          const retryResponseData = (await retryResponse.json()) as JiraCreateResponse;
+
+          if (retryResponse.ok) {
+            console.log("Ticket created successfully after removing problematic custom fields");
+            return { success: true, data: retryResponseData };
+          } else {
+            console.error("Retry also failed:", JSON.stringify(retryResponseData, null, 2));
+          }
+        }
+      }
+
       // Try to extract more detailed error information
       let errorMessage = `Status: ${response.status} ${response.statusText}`;
 
@@ -454,7 +606,7 @@ async function searchJiraTickets(
 }> {
   const jiraUrl = `https://${
     process.env.JIRA_HOST
-  }/rest/api/3/search?jql=${encodeURIComponent(jql)}&maxResults=${maxResults}`;
+  }/rest/api/3/search/jql?jql=${encodeURIComponent(jql)}&maxResults=${maxResults}`;
 
   console.log("JIRA Search URL:", jiraUrl);
   console.log("JIRA Search JQL:", jql);
@@ -507,7 +659,9 @@ server.tool(
   "Create a jira ticket",
   {
     summary: z.string().min(1, "Summary is required"),
-    issue_type: z.enum(["Bug", "Task", "Story", "Test"]).default("Task"),
+    issue_type: z
+      .enum(["Bug", "Task", "Story", "Test", "Epic"])
+      .default("Task"),
     description: z.string().optional(),
     acceptance_criteria: z.string().optional(),
     story_points: z.number().optional(),
@@ -515,6 +669,8 @@ server.tool(
     parent_epic: z.string().optional(),
     sprint: z.string().optional(),
     story_readiness: z.enum(["Yes", "No"]).optional(),
+    project_key: z.string().optional(),
+    crisis: z.enum(["Yes", "No"]).optional(),
   },
   async ({
     summary,
@@ -526,9 +682,9 @@ server.tool(
     parent_epic,
     sprint,
     story_readiness,
+    project_key,
+    crisis,
   }) => {
-    const jiraUrl = `https://${process.env.JIRA_HOST}/rest/api/3/issue`;
-
     const formattedDescription = formatDescription(description);
 
     // Determine if we should create a test ticket
@@ -541,7 +697,7 @@ server.tool(
     const payload: any = {
       fields: {
         project: {
-          key: process.env.JIRA_PROJECT_KEY || "SCRUM",
+          key: project_key || process.env.JIRA_PROJECT_KEY || "SCRUM",
         },
         summary: summary,
         description: formattedDescription,
@@ -571,21 +727,31 @@ server.tool(
       );
     }
 
-    // Only add custom fields for Bug, Task, and Story issue types, not for Test
-    if (issue_type !== "Test") {
+    // Only add custom fields for Bug, Task, and Story issue types. Do NOT add for Epic or Test.
+    if (
+      issue_type === "Bug" ||
+      issue_type === "Task" ||
+      issue_type === "Story"
+    ) {
       // Add product field if configured
       const productField = process.env.JIRA_PRODUCT_FIELD;
       const productValue = process.env.JIRA_PRODUCT_VALUE;
       const productId = process.env.JIRA_PRODUCT_ID;
 
       if (productField && productValue && productId) {
-        payload.fields[productField] = [
-          {
-            self: `https://${process.env.JIRA_HOST}/rest/api/3/customFieldOption/${productId}`,
-            value: productValue,
-            id: productId,
-          },
-        ];
+        // Try different formats for the product field
+        // Some JIRA instances expect just the ID, others expect the full object
+        console.log(`Configuring product field ${productField} with value "${productValue}" and ID "${productId}"`);
+
+        // Try with array format first (as some JIRA instances require arrays)
+        payload.fields[productField] = [{
+          self: `https://${process.env.JIRA_HOST}/rest/api/3/customFieldOption/${productId}`,
+          value: productValue,
+          id: productId,
+        }];
+      } else if (productField) {
+        // Product field is configured but missing value or ID
+        console.warn(`Product field ${productField} is configured but missing JIRA_PRODUCT_VALUE or JIRA_PRODUCT_ID`);
       }
 
       // Add category field if configured
@@ -624,12 +790,17 @@ server.tool(
       payload.fields.labels = ["QA-Testable"];
     }
 
-    // Add parent epic if provided
+    // Add parent epic/parent link if provided
     if (parent_epic !== undefined) {
-      // Using environment variable for epic link field
-      const epicLinkField =
-        process.env.JIRA_EPIC_LINK_FIELD || "customfield_10014";
-      payload.fields[epicLinkField] = parent_epic;
+      if (issue_type === "Epic") {
+        // For Epic creation, set parent to Initiative key via standard parent field
+        payload.fields.parent = { key: parent_epic };
+      } else {
+        // For Stories/Tasks/Bugs, set Epic Link
+        const epicLinkField =
+          process.env.JIRA_EPIC_LINK_FIELD || "customfield_10014";
+        payload.fields[epicLinkField] = parent_epic;
+      }
     }
 
     // Add sprint if provided
@@ -650,6 +821,22 @@ server.tool(
         self: `https://${process.env.JIRA_HOST}/rest/api/3/customFieldOption/${storyReadinessId}`,
         value: story_readiness,
         id: storyReadinessId,
+      };
+    }
+
+    // Add crisis field if provided
+    if (crisis !== undefined) {
+      // Crisis field configuration from environment variables
+      // Set JIRA_CRISIS_FIELD to your project's crisis custom field ID
+      const crisisField = process.env.JIRA_CRISIS_FIELD || "customfield_14238";
+      const crisisId = crisis === "Yes"
+        ? process.env.JIRA_CRISIS_YES_ID || "23123"
+        : process.env.JIRA_CRISIS_NO_ID || "23124";
+
+      payload.fields[crisisField] = {
+        self: `https://${process.env.JIRA_HOST}/rest/api/3/customFieldOption/${crisisId}`,
+        value: crisis,
+        id: crisisId,
       };
     }
 
@@ -876,7 +1063,7 @@ server.tool(
   "search-tickets",
   "Search for jira tickets by issue type",
   {
-    issue_type: z.enum(["Bug", "Task", "Story", "Test"]),
+    issue_type: z.enum(["Bug", "Task", "Story", "Test", "Epic"]),
     max_results: z.number().min(1).max(50).default(10).optional(),
     additional_criteria: z.string().optional(), // For additional JQL criteria
   },
@@ -933,6 +1120,68 @@ server.tool(
         {
           type: "text",
           text: `Found ${result.data.total} ${issue_type} tickets (showing ${
+            tickets.length
+          }):\n\n${JSON.stringify(tickets, null, 2)}`,
+        },
+      ],
+    };
+  }
+);
+
+server.tool(
+  "search-tickets-jql",
+  "Search for jira tickets using custom JQL query",
+  {
+    jql: z.string().min(1, "JQL query is required"),
+    max_results: z.number().min(1).max(50).default(10).optional(),
+  },
+  async ({ jql, max_results = 10 }) => {
+    // Create the auth token
+    const auth = Buffer.from(
+      `${process.env.JIRA_USERNAME}:${process.env.JIRA_API_TOKEN}`
+    ).toString("base64");
+
+    // Search for tickets using the provided JQL
+    const result = await searchJiraTickets(jql, max_results, auth);
+
+    if (!result.success) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error searching tickets: ${result.errorMessage}`,
+          },
+        ],
+      };
+    }
+
+    // Check if we have results
+    if (!result.data.issues || result.data.issues.length === 0) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `No tickets found matching the JQL query: ${jql}`,
+          },
+        ],
+      };
+    }
+
+    // Format the results
+    const tickets = result.data.issues.map((issue) => ({
+      key: issue.key,
+      summary: issue.fields.summary,
+      status: issue.fields.status?.name || "Unknown",
+      priority: issue.fields.priority?.name || "Unknown",
+      issuetype: issue.fields.issuetype?.name || "Unknown",
+      description: issue.fields.description || "No description",
+    }));
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Found ${result.data.total || tickets.length} ticket(s) (showing ${
             tickets.length
           }):\n\n${JSON.stringify(tickets, null, 2)}`,
         },
