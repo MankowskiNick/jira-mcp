@@ -1,0 +1,36 @@
+{
+  "mcpServers": {
+    "jira-mcp": {
+      "command": "node",
+      "args": ["/path/to/project/build/index.js"],
+      "env": {
+        "JIRA_HOST": "your-site.atlassian.net",
+        "JIRA_USERNAME": "your-email@example.com",
+        "JIRA_API_TOKEN": "your_api_token",
+        "JIRA_PROJECT_KEY": "your_project_key",
+        
+        "AUTO_CREATE_TEST_TICKETS": "true",
+
+        "JIRA_ACCEPTANCE_CRITERIA_FIELD": "customfield_10429",
+        "JIRA_STORY_POINTS_FIELD": "customfield_10040",
+        "JIRA_EPIC_LINK_FIELD": "customfield_10014",
+
+        "JIRA_PRODUCT_FIELD": "customfield_10757",
+        "JIRA_PRODUCT_VALUE": "Your Product Name",
+        "JIRA_PRODUCT_ID": "12345",
+
+        "JIRA_CATEGORY_FIELD": "customfield_10636",
+        "USE_ALTERNATE_CATEGORY": "false",
+        "JIRA_DEFAULT_CATEGORY_VALUE": "Default Category",
+        "JIRA_DEFAULT_CATEGORY_ID": "12345",
+        "JIRA_ALTERNATE_CATEGORY_VALUE": "Alternate Category",
+        "JIRA_ALTERNATE_CATEGORY_ID": "67890",
+        
+        "ZAPI_BASE_URL": "https://prod-api.zephyr4jiracloud.com/connect",
+        "ZAPI_ACCESS_KEY": "your_zephyr_access_key",
+        "ZAPI_SECRET_KEY": "your_zephyr_secret_key",
+        "ZAPI_JWT_EXPIRE_SEC": "3600"
+      }
+    }
+  }
+}

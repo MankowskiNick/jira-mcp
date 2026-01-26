@@ -216,14 +216,14 @@ async function addZephyrTestStep(
   }
 }
 
+// Auto-create test tickets setting
+const autoCreateTestTickets = process.env.AUTO_CREATE_TEST_TICKETS !== "false";
+
 // Create server instance
 const server = new McpServer({
   name: "jira-mcp",
   version: "1.0.0",
 });
-
-// Check if auto-creation of test tickets is enabled (default to true)
-const autoCreateTestTickets = process.env.AUTO_CREATE_TEST_TICKETS !== "false";
 
 // Helper function to format text content for JIRA API v3
 function formatJiraContent(
