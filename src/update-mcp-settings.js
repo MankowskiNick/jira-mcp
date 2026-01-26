@@ -7,7 +7,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Paths
-const mergedConfigPath = path.join(__dirname, 'merged-jira-mcp-config.json');
+const mergedConfigPath = path.join(__dirname, '..', 'merged-jira-mcp-config.json');
 const settingsPath = '/home/joe/.vscode-server/data/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json';
 
 try {

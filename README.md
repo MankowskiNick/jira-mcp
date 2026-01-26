@@ -52,8 +52,11 @@ The JIRA MCP project is a Node.js/TypeScript application that provides a Model C
 ## Features
 
 - Create JIRA tickets with summary, description, acceptance criteria, and issue type
+- Search JIRA tickets using flexible JQL queries or by issue type
 - Assign story points to Story tickets
 - Automatically create linked Test tickets for Stories with points
+- Enhanced error handling with automatic retry for custom field validation issues
+- Updated to use latest JIRA REST API v3 specification (CHANGE-2046 compliant)
 - Search for JIRA tickets by issue type and additional criteria
 - Update existing JIRA tickets with new field values
 - Link JIRA tickets together with specified relationship types
@@ -189,6 +192,12 @@ This is entirely optional. The category field is only used if `JIRA_CATEGORY_FIE
 - `JIRA_ALTERNATE_CATEGORY_VALUE`: The display value for the alternate category
 - `JIRA_ALTERNATE_CATEGORY_ID`: The ID of the alternate category option
 
+#### Crisis Field Configuration (Optional)
+
+- `JIRA_CRISIS_FIELD`: The field ID for the crisis field (default: "customfield_10597")
+- `JIRA_CRISIS_YES_ID`: The ID of the "Yes" option (default: "18258")
+- `JIRA_CRISIS_NO_ID`: The ID of the "No" option (default: "18259")
+
 ### Minimal Configuration Example
 
 If you want the absolute minimal configuration, you can use:
@@ -244,6 +253,7 @@ Creates a new JIRA ticket.
 - `parent_epic`: Key of the parent epic to link this ticket to (optional, e.g., "PROJ-123")
 - `sprint`: The name of the sprint to assign the ticket to (optional, e.g., "2025_C1_S07")
 - `story_readiness`: Whether the story is ready for development (optional, "Yes" or "No")
+- `crisis`: Whether this ticket represents a crisis/urgent issue (optional, "Yes" or "No")
 
 When creating a Story ticket with story points:
 
@@ -453,6 +463,24 @@ const transport = new StdioServerTransport();
 await server.connect(transport);
 ```
 
+### search-tickets-jql
+
+Searches for JIRA tickets using custom JQL (JIRA Query Language) queries.
+
+**Parameters:**
+
+- `jql`: The JQL query to execute (required) - any valid JIRA Query Language expression
+- `max_results`: Maximum number of results to return (optional, default: 10, max: 50)
+
+**Examples:**
+
+- Search for a specific ticket: `key = "PROJ-123"`
+- Search by project and status: `project = "MYPROJECT" AND status = "In Progress"`
+- Search by assignee: `assignee = "john.doe@company.com"`
+- Search by multiple criteria: `project = "PROJ" AND issuetype = "Bug" AND priority = "High"`
+
+This tool provides full flexibility for searching JIRA tickets using any valid JQL query. It uses the updated `/rest/api/3/search/jql` endpoint for optimal compatibility with current JIRA Cloud instances.
+
 ### JIRA Integration
 
 The JIRA integration module provides tools for interacting with the JIRA REST API:
@@ -567,6 +595,24 @@ Create a JIRA ticket for implementing the new user authentication feature with t
 ```
 
 Claude will use the create-ticket tool to generate a ticket in your JIRA project with all the specified details.
+
+## API Updates and Compatibility
+
+This JIRA MCP has been updated to use the latest JIRA REST API v3 specification to ensure continued compatibility with Atlassian's evolving platform.
+
+### Key Updates Made
+
+- **Search Endpoint Migration**: Updated from deprecated `/rest/api/3/search` to `/rest/api/3/search/jql` (CHANGE-2046 compliance)
+- **Enhanced Error Handling**: Automatic retry logic for custom field validation errors - if a custom field value becomes invalid, the system automatically retries ticket creation without the problematic field
+- **Improved Pagination Support**: Response handling supports both legacy (`startAt`, `maxResults`, `total`) and new (`isLast`, `nextPageToken`) pagination formats
+- **Future-Proof Architecture**: All endpoints verified to use current JIRA REST API v3 paths
+
+### Deprecation Timeline
+
+- **August 1, 2025**: Old search endpoints will be progressively shut down
+- **October 31, 2025**: All traffic to deprecated endpoints will be blocked
+
+This MCP is fully prepared for these changes and will continue working seamlessly through the transition period and beyond.
 
 ## Getting a JIRA API Token
 
