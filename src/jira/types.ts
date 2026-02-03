@@ -50,3 +50,39 @@ export type JiraSearchResponse = {
   maxResults?: number;
   startAt?: number;
 };
+
+// Comment types
+export type JiraCommentResponse = {
+  errorMessages?: string[];
+  errors?: Record<string, string>;
+  id?: string;
+  body?: any;
+  author?: { accountId: string; displayName: string };
+  created?: string;
+};
+
+export type JiraComment = {
+  id: string;
+  body: any;
+  author: { accountId: string; displayName: string };
+  created: string;
+  updated: string;
+};
+
+export type JiraCommentsListResponse = {
+  errorMessages?: string[];
+  comments?: JiraComment[];
+  total?: number;
+};
+
+// Transition types
+export type JiraTransition = {
+  id: string;
+  name: string;
+  to: { id: string; name: string };
+};
+
+export type JiraTransitionsResponse = {
+  errorMessages?: string[];
+  transitions?: JiraTransition[];
+};

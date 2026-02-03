@@ -115,3 +115,59 @@ export function formatAcceptanceCriteria(criteria: string | undefined) {
     content: content,
   };
 }
+
+/**
+ * Extracts plain text from Atlassian Document Format (ADF).
+ * Recursively traverses the ADF structure to extract all text content.
+ *
+ * @param adf - The ADF document or node to extract text from
+ * @returns Plain text representation of the ADF content
+ */
+export function extractTextFromAdf(adf: any): string {
+  if (!adf) {
+    return "";
+  }
+
+  // If it's a string, return it directly
+  if (typeof adf === "string") {
+    return adf;
+  }
+
+  // If it's a text node, return the text
+  if (adf.type === "text" && adf.text) {
+    return adf.text;
+  }
+
+  // If it has content array, recursively extract text from each node
+  if (Array.isArray(adf.content)) {
+    const parts: string[] = [];
+
+    for (const node of adf.content) {
+      const text = extractTextFromAdf(node);
+      if (text) {
+        parts.push(text);
+      }
+    }
+
+    // Add appropriate separators based on node types
+    if (adf.type === "paragraph" || adf.type === "heading") {
+      return parts.join("") + "\n";
+    }
+
+    if (adf.type === "bulletList" || adf.type === "orderedList") {
+      return parts.join("");
+    }
+
+    if (adf.type === "listItem") {
+      return "• " + parts.join("") + "\n";
+    }
+
+    if (adf.type === "codeBlock") {
+      return "```\n" + parts.join("") + "\n```\n";
+    }
+
+    return parts.join("");
+  }
+
+  return "";
+}
