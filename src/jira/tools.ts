@@ -1,11 +1,27 @@
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { createJiraTicket, createTicketLink, searchJiraTickets, updateJiraTicket } from "./api.js";
-import { formatDescription, formatAcceptanceCriteria } from "./formatting.js";
+import {
+  createJiraTicket,
+  createTicketLink,
+  searchJiraTickets,
+  updateJiraTicket,
+  addJiraComment,
+  getJiraComments,
+  getJiraTransitions,
+  transitionJiraTicket,
+  assignJiraTicket,
+  addJiraWatcher,
+  removeJiraWatcher,
+} from "./api.js";
+import {
+  formatDescription,
+  formatAcceptanceCriteria,
+  extractTextFromAdf,
+} from "./formatting.js";
 import { getJiraIssueId } from "../utils.js";
-import { 
-  getZephyrTestSteps, 
-  addZephyrTestStep 
+import {
+  getZephyrTestSteps,
+  addZephyrTestStep,
 } from "../zephyr/index.js";
 
 // Check if auto-creation of test tickets is enabled (default to true)
@@ -456,19 +472,40 @@ export function registerJiraTools(server: McpServer) {
     }
   );
 
-  // Update ticket tool
+  // Update ticket tool (enhanced with additional fields)
   server.tool(
     "update-ticket",
-    "Update an existing jira ticket",
+    "Update an existing jira ticket with various fields",
     {
       ticket_key: z.string().min(1, "Ticket key is required"),
+      summary: z.string().optional(),
       description: z.string().optional(),
       acceptance_criteria: z.string().optional(),
       story_points: z.number().optional(),
       sprint: z.string().optional(),
       story_readiness: z.enum(["Yes", "No"]).optional(),
+      assignee: z.string().optional().describe("Account ID or 'unassigned' to remove assignee"),
+      priority: z.enum(["Highest", "High", "Medium", "Low", "Lowest"]).optional(),
+      labels: z.array(z.string()).optional().describe("Replaces existing labels"),
+      components: z.array(z.string()).optional().describe("Component names"),
+      fix_versions: z.array(z.string()).optional().describe("Fix version names"),
+      due_date: z.string().optional().describe("Due date in YYYY-MM-DD format"),
     },
-    async ({ ticket_key, description, acceptance_criteria, story_points, sprint, story_readiness }) => {
+    async ({
+      ticket_key,
+      summary,
+      description,
+      acceptance_criteria,
+      story_points,
+      sprint,
+      story_readiness,
+      assignee,
+      priority,
+      labels,
+      components,
+      fix_versions,
+      due_date,
+    }) => {
       // Create the auth token
       const auth = Buffer.from(
         `${process.env.JIRA_USERNAME}:${process.env.JIRA_API_TOKEN}`
@@ -479,6 +516,11 @@ export function registerJiraTools(server: McpServer) {
         fields: {},
       };
 
+      // Add summary if provided
+      if (summary !== undefined) {
+        payload.fields.summary = summary;
+      }
+
       // Add description if provided
       if (description !== undefined) {
         payload.fields.description = formatDescription(description);
@@ -486,18 +528,14 @@ export function registerJiraTools(server: McpServer) {
 
       // Add acceptance criteria if provided
       if (acceptance_criteria !== undefined) {
-        // Using environment variable for acceptance criteria field
         const acceptanceCriteriaField =
           process.env.JIRA_ACCEPTANCE_CRITERIA_FIELD || "customfield_10429";
-
-        // Format and add acceptance criteria to the custom field
         payload.fields[acceptanceCriteriaField] =
           formatAcceptanceCriteria(acceptance_criteria);
       }
 
       // Add story points if provided
       if (story_points !== undefined) {
-        // Using environment variable for story points field
         const storyPointsField =
           process.env.JIRA_STORY_POINTS_FIELD || "customfield_10040";
         payload.fields[storyPointsField] = story_points;
@@ -505,17 +543,11 @@ export function registerJiraTools(server: McpServer) {
 
       // Add sprint if provided
       if (sprint !== undefined) {
-        // Sprint field is customfield_10020 based on our query
-        payload.fields["customfield_10020"] = [
-          {
-            name: sprint,
-          },
-        ];
+        payload.fields["customfield_10020"] = [{ name: sprint }];
       }
 
       // Add story readiness if provided
       if (story_readiness !== undefined) {
-        // Story Readiness field is customfield_10596 based on our query
         const storyReadinessId = story_readiness === "Yes" ? "18256" : "18257";
         payload.fields["customfield_10596"] = {
           self: `https://${process.env.JIRA_HOST}/rest/api/3/customFieldOption/${storyReadinessId}`,
@@ -524,13 +556,44 @@ export function registerJiraTools(server: McpServer) {
         };
       }
 
+      // Add assignee if provided
+      if (assignee !== undefined) {
+        payload.fields.assignee =
+          assignee === "unassigned" ? null : { accountId: assignee };
+      }
+
+      // Add priority if provided
+      if (priority !== undefined) {
+        payload.fields.priority = { name: priority };
+      }
+
+      // Add labels if provided
+      if (labels !== undefined) {
+        payload.fields.labels = labels;
+      }
+
+      // Add components if provided
+      if (components !== undefined) {
+        payload.fields.components = components.map((name) => ({ name }));
+      }
+
+      // Add fix versions if provided
+      if (fix_versions !== undefined) {
+        payload.fields.fixVersions = fix_versions.map((name) => ({ name }));
+      }
+
+      // Add due date if provided
+      if (due_date !== undefined) {
+        payload.fields.duedate = due_date;
+      }
+
       // If no fields were provided, return an error
       if (Object.keys(payload.fields).length === 0) {
         return {
           content: [
             {
               type: "text" as const,
-              text: "Error: At least one field to update must be provided(description, acceptance_criteria, story_points, sprint, story_readiness).",
+              text: "Error: At least one field to update must be provided.",
             },
           ],
         };
@@ -551,21 +614,229 @@ export function registerJiraTools(server: McpServer) {
       }
 
       // Build response text
-      let responseText = `Successfully updated ticket ${ticket_key}`;
-      if (description !== undefined) {
-        responseText += `, description updated`;
+      const updatedFields: string[] = [];
+      if (summary !== undefined) updatedFields.push("summary");
+      if (description !== undefined) updatedFields.push("description");
+      if (acceptance_criteria !== undefined) updatedFields.push("acceptance_criteria");
+      if (story_points !== undefined) updatedFields.push(`story_points: ${story_points}`);
+      if (sprint !== undefined) updatedFields.push(`sprint: ${sprint}`);
+      if (story_readiness !== undefined) updatedFields.push(`story_readiness: ${story_readiness}`);
+      if (assignee !== undefined) updatedFields.push(`assignee: ${assignee}`);
+      if (priority !== undefined) updatedFields.push(`priority: ${priority}`);
+      if (labels !== undefined) updatedFields.push(`labels: [${labels.join(", ")}]`);
+      if (components !== undefined) updatedFields.push(`components: [${components.join(", ")}]`);
+      if (fix_versions !== undefined) updatedFields.push(`fix_versions: [${fix_versions.join(", ")}]`);
+      if (due_date !== undefined) updatedFields.push(`due_date: ${due_date}`);
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Successfully updated ticket ${ticket_key}: ${updatedFields.join(", ")}`,
+          },
+        ],
+      };
+    }
+  );
+
+  // Add comment tool
+  server.tool(
+    "add-comment",
+    "Add a comment to a JIRA ticket",
+    {
+      ticket_key: z.string().min(1, "Ticket key is required"),
+      comment: z.string().min(1, "Comment text is required"),
+    },
+    async ({ ticket_key, comment }) => {
+      const auth = Buffer.from(
+        `${process.env.JIRA_USERNAME}:${process.env.JIRA_API_TOKEN}`
+      ).toString("base64");
+
+      const commentBody = formatDescription(comment);
+      const result = await addJiraComment(ticket_key, commentBody, auth);
+
+      if (!result.success) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Error adding comment: ${result.errorMessage}`,
+            },
+          ],
+        };
       }
-      if (acceptance_criteria !== undefined) {
-        responseText += `, acceptance criteria updated`;
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Successfully added comment to ${ticket_key}`,
+          },
+        ],
+      };
+    }
+  );
+
+  // List comments tool
+  server.tool(
+    "list-comments",
+    "List comments on a JIRA ticket",
+    {
+      ticket_key: z.string().min(1, "Ticket key is required"),
+      max_results: z.number().min(1).max(100).default(20).optional(),
+    },
+    async ({ ticket_key, max_results = 20 }) => {
+      const auth = Buffer.from(
+        `${process.env.JIRA_USERNAME}:${process.env.JIRA_API_TOKEN}`
+      ).toString("base64");
+
+      const result = await getJiraComments(ticket_key, max_results, auth);
+
+      if (!result.success) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Error getting comments: ${result.errorMessage}`,
+            },
+          ],
+        };
       }
-      if (story_points !== undefined) {
-        responseText += `, story points: ${story_points}`;
+
+      const comments = result.data?.comments || [];
+      if (comments.length === 0) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `No comments found on ${ticket_key}`,
+            },
+          ],
+        };
       }
-      if (sprint !== undefined) {
-        responseText += `, sprint: ${sprint}`;
+
+      const formattedComments = comments.map((c) => ({
+        id: c.id,
+        author: c.author.displayName,
+        created: c.created,
+        body: extractTextFromAdf(c.body).trim(),
+      }));
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Found ${result.data?.total || comments.length} comments on ${ticket_key}:\n\n${JSON.stringify(formattedComments, null, 2)}`,
+          },
+        ],
+      };
+    }
+  );
+
+  // Transition ticket tool
+  server.tool(
+    "transition-ticket",
+    "Transition a JIRA ticket to a different status",
+    {
+      ticket_key: z.string().min(1, "Ticket key is required"),
+      transition_name: z.string().optional().describe("Transition name (e.g., 'Done', 'In Progress')"),
+      transition_id: z.string().optional().describe("Transition ID (use if name is ambiguous)"),
+      list_transitions: z.boolean().optional().describe("List available transitions instead of transitioning"),
+      comment: z.string().optional().describe("Comment to add during the transition"),
+    },
+    async ({ ticket_key, transition_name, transition_id, list_transitions, comment }) => {
+      const auth = Buffer.from(
+        `${process.env.JIRA_USERNAME}:${process.env.JIRA_API_TOKEN}`
+      ).toString("base64");
+
+      // Get available transitions
+      const transitionsResult = await getJiraTransitions(ticket_key, auth);
+
+      if (!transitionsResult.success) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Error getting transitions: ${transitionsResult.errorMessage}`,
+            },
+          ],
+        };
       }
-      if (story_readiness !== undefined) {
-        responseText += `, story readiness: ${story_readiness}`;
+
+      const transitions = transitionsResult.data?.transitions || [];
+
+      // If list_transitions is true, just return the available transitions
+      if (list_transitions) {
+        const transitionList = transitions.map((t) => ({
+          id: t.id,
+          name: t.name,
+          to: t.to.name,
+        }));
+
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Available transitions for ${ticket_key}:\n\n${JSON.stringify(transitionList, null, 2)}`,
+            },
+          ],
+        };
+      }
+
+      // Find the transition by ID or name
+      let targetTransition;
+      if (transition_id) {
+        targetTransition = transitions.find((t) => t.id === transition_id);
+      } else if (transition_name) {
+        targetTransition = transitions.find(
+          (t) => t.name.toLowerCase() === transition_name.toLowerCase()
+        );
+      } else {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: "Error: Either transition_name or transition_id is required (or use list_transitions to see available options)",
+            },
+          ],
+        };
+      }
+
+      if (!targetTransition) {
+        const availableNames = transitions.map((t) => `"${t.name}" (id: ${t.id})`).join(", ");
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Error: Transition not found. Available transitions: ${availableNames}`,
+            },
+          ],
+        };
+      }
+
+      // Execute the transition
+      const commentBody = comment ? formatDescription(comment) : undefined;
+      const result = await transitionJiraTicket(
+        ticket_key,
+        targetTransition.id,
+        commentBody,
+        auth
+      );
+
+      if (!result.success) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Error transitioning ticket: ${result.errorMessage}`,
+            },
+          ],
+        };
+      }
+
+      let responseText = `Successfully transitioned ${ticket_key} to "${targetTransition.to.name}"`;
+      if (comment) {
+        responseText += " with comment";
       }
 
       return {
@@ -573,6 +844,122 @@ export function registerJiraTools(server: McpServer) {
           {
             type: "text" as const,
             text: responseText,
+          },
+        ],
+      };
+    }
+  );
+
+  // Assign ticket tool
+  server.tool(
+    "assign-ticket",
+    "Assign or unassign a JIRA ticket",
+    {
+      ticket_key: z.string().min(1, "Ticket key is required"),
+      account_id: z.string().optional().describe("Account ID to assign to. Omit to unassign."),
+    },
+    async ({ ticket_key, account_id }) => {
+      const auth = Buffer.from(
+        `${process.env.JIRA_USERNAME}:${process.env.JIRA_API_TOKEN}`
+      ).toString("base64");
+
+      const result = await assignJiraTicket(
+        ticket_key,
+        account_id || null,
+        auth
+      );
+
+      if (!result.success) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Error assigning ticket: ${result.errorMessage}`,
+            },
+          ],
+        };
+      }
+
+      const action = account_id ? `assigned to ${account_id}` : "unassigned";
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Successfully ${action} ticket ${ticket_key}`,
+          },
+        ],
+      };
+    }
+  );
+
+  // Add watcher tool
+  server.tool(
+    "add-watcher",
+    "Add a watcher to a JIRA ticket",
+    {
+      ticket_key: z.string().min(1, "Ticket key is required"),
+      account_id: z.string().min(1, "Account ID is required"),
+    },
+    async ({ ticket_key, account_id }) => {
+      const auth = Buffer.from(
+        `${process.env.JIRA_USERNAME}:${process.env.JIRA_API_TOKEN}`
+      ).toString("base64");
+
+      const result = await addJiraWatcher(ticket_key, account_id, auth);
+
+      if (!result.success) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Error adding watcher: ${result.errorMessage}`,
+            },
+          ],
+        };
+      }
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Successfully added ${account_id} as watcher to ${ticket_key}`,
+          },
+        ],
+      };
+    }
+  );
+
+  // Remove watcher tool
+  server.tool(
+    "remove-watcher",
+    "Remove a watcher from a JIRA ticket",
+    {
+      ticket_key: z.string().min(1, "Ticket key is required"),
+      account_id: z.string().min(1, "Account ID is required"),
+    },
+    async ({ ticket_key, account_id }) => {
+      const auth = Buffer.from(
+        `${process.env.JIRA_USERNAME}:${process.env.JIRA_API_TOKEN}`
+      ).toString("base64");
+
+      const result = await removeJiraWatcher(ticket_key, account_id, auth);
+
+      if (!result.success) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Error removing watcher: ${result.errorMessage}`,
+            },
+          ],
+        };
+      }
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Successfully removed ${account_id} as watcher from ${ticket_key}`,
           },
         ],
       };
