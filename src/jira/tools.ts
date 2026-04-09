@@ -29,13 +29,28 @@ const autoCreateTestTickets = process.env.AUTO_CREATE_TEST_TICKETS !== "false";
 
 // Register JIRA tools on the provided server instance
 export function registerJiraTools(server: McpServer) {
+  const storyReadinessField =
+    process.env.JIRA_STORY_READINESS_FIELD || "customfield_10635";
+  const storyReadinessYesId =
+    process.env.JIRA_STORY_READINESS_YES_ID || "18381";
+  const storyReadinessNoId =
+    process.env.JIRA_STORY_READINESS_NO_ID || "18382";
+  const crisisField = process.env.JIRA_CRISIS_FIELD || "customfield_14238";
+  const crisisYesId = process.env.JIRA_CRISIS_YES_ID || "23123";
+  const crisisNoId = process.env.JIRA_CRISIS_NO_ID || "23124";
+  const initiativeTypeField =
+    process.env.JIRA_INITIATIVE_TYPE_FIELD || "customfield_10636";
+  const initiativeTypeId = process.env.JIRA_INITIATIVE_TYPE_ID || "23784";
+  const initiativeTypeValue =
+    process.env.JIRA_INITIATIVE_TYPE_VALUE || "CNR";
+
   // Create ticket tool
   server.tool(
     "create-ticket",
     "Create a jira ticket",
     {
       summary: z.string().min(1, "Summary is required"),
-      issue_type: z.enum(["Bug", "Task", "Story", "Test"]).default("Task"),
+      issue_type: z.enum(["Bug", "Task", "Story", "Test", "Epic"]).default("Task"),
       description: z.string().optional(),
       acceptance_criteria: z.string().optional(),
       story_points: z.number().optional(),
@@ -43,6 +58,24 @@ export function registerJiraTools(server: McpServer) {
       parent_epic: z.string().optional(),
       sprint: z.string().optional(),
       story_readiness: z.enum(["Yes", "No"]).optional(),
+      project_key: z
+        .string()
+        .optional()
+        .describe("Project key (overrides JIRA_PROJECT_KEY env var)"),
+      assignee: z
+        .string()
+        .optional()
+        .describe("Account ID to assign the ticket to"),
+      labels: z.array(z.string()).optional().describe("Labels to add to the ticket"),
+      components: z.array(z.string()).optional().describe("Component names"),
+      priority: z.enum(["Highest", "High", "Medium", "Low", "Lowest"]).optional(),
+      due_date: z.string().optional().describe("Due date in YYYY-MM-DD format"),
+      crisis: z.enum(["Yes", "No"]).optional().describe("Crisis field"),
+      initiative_type: z
+        .string()
+        .optional()
+        .describe("Initiative Type value"),
+      product_name: z.string().optional().describe("Product Name value"),
     },
     async ({
       summary,
@@ -54,6 +87,15 @@ export function registerJiraTools(server: McpServer) {
       parent_epic,
       sprint,
       story_readiness,
+      project_key,
+      assignee,
+      labels: inputLabels,
+      components,
+      priority,
+      due_date,
+      crisis,
+      initiative_type,
+      product_name,
     }) => {
       const jiraUrl = `https://${process.env.JIRA_HOST}/rest/api/3/issue`;
 
@@ -69,7 +111,7 @@ export function registerJiraTools(server: McpServer) {
       const payload: any = {
         fields: {
           project: {
-            key: process.env.JIRA_PROJECT_KEY || "SCRUM",
+            key: project_key || process.env.JIRA_PROJECT_KEY || "SCRUM",
           },
           summary: summary,
           description: formattedDescription,
@@ -101,9 +143,9 @@ export function registerJiraTools(server: McpServer) {
 
       // Only add custom fields for Bug, Task, and Story issue types, not for Test
       if (issue_type !== "Test") {
-        // Add product field if configured
+        // Add product field - use param if provided, fall back to env vars
         const productField = process.env.JIRA_PRODUCT_FIELD;
-        const productValue = process.env.JIRA_PRODUCT_VALUE;
+        const productValue = product_name || process.env.JIRA_PRODUCT_VALUE;
         const productId = process.env.JIRA_PRODUCT_ID;
 
         if (productField && productValue && productId) {
@@ -160,25 +202,68 @@ export function registerJiraTools(server: McpServer) {
         payload.fields[epicLinkField] = parent_epic;
       }
 
-      // Add sprint if provided
+      // Add sprint if provided (Jira expects numeric sprint ID)
       if (sprint !== undefined) {
-        // Sprint field is customfield_10020 based on our query
-        payload.fields["customfield_10020"] = [
-          {
-            name: sprint,
-          },
-        ];
+        const sprintId = typeof sprint === 'string' ? parseInt(sprint, 10) : sprint;
+        payload.fields["customfield_10020"] = sprintId;
       }
 
       // Add story readiness if provided
       if (story_readiness !== undefined) {
-        // Story Readiness field is customfield_10596 based on our query
-        const storyReadinessId = story_readiness === "Yes" ? "18256" : "18257";
-        payload.fields["customfield_10596"] = {
+        const storyReadinessId =
+          story_readiness === "Yes"
+            ? storyReadinessYesId
+            : storyReadinessNoId;
+        payload.fields[storyReadinessField] = {
           self: `https://${process.env.JIRA_HOST}/rest/api/3/customFieldOption/${storyReadinessId}`,
           value: story_readiness,
           id: storyReadinessId,
         };
+      }
+
+      // Auto-default crisis and initiative type for non-Test issue types
+      if (issue_type !== "Test") {
+        const effectiveCrisis = crisis ?? "No";
+        const crisisId = effectiveCrisis === "Yes" ? crisisYesId : crisisNoId;
+        payload.fields[crisisField] = {
+          self: `https://${process.env.JIRA_HOST}/rest/api/3/customFieldOption/${crisisId}`,
+          value: effectiveCrisis,
+          id: crisisId,
+        };
+
+        const effectiveInitiativeTypeValue =
+          initiative_type || initiativeTypeValue;
+        payload.fields[initiativeTypeField] = {
+          self: `https://${process.env.JIRA_HOST}/rest/api/3/customFieldOption/${initiativeTypeId}`,
+          value: effectiveInitiativeTypeValue,
+          id: initiativeTypeId,
+        };
+      }
+
+      // Add assignee if provided
+      if (assignee !== undefined) {
+        payload.fields.assignee = { accountId: assignee };
+      }
+
+      // Add/merge labels if provided
+      if (inputLabels !== undefined && inputLabels.length > 0) {
+        const existingLabels = payload.fields.labels || [];
+        payload.fields.labels = [...existingLabels, ...inputLabels];
+      }
+
+      // Add components if provided
+      if (components !== undefined) {
+        payload.fields.components = components.map((name: string) => ({ name }));
+      }
+
+      // Add priority if provided
+      if (priority !== undefined) {
+        payload.fields.priority = { name: priority };
+      }
+
+      // Add due date if provided
+      if (due_date !== undefined) {
+        payload.fields.duedate = due_date;
       }
 
       // Create the auth token
@@ -214,6 +299,13 @@ export function registerJiraTools(server: McpServer) {
         responseText += `, story points: ${story_points}`;
       }
 
+      if (assignee !== undefined) {
+        responseText += `, assignee: ${assignee}`;
+      }
+      if (priority !== undefined) {
+        responseText += `, priority: ${priority}`;
+      }
+
       // Create a test ticket if this is a Story with points and auto-creation is enabled
       if (
         shouldCreateTestTicket &&
@@ -225,7 +317,7 @@ export function registerJiraTools(server: McpServer) {
         const testTicketPayload: any = {
           fields: {
             project: {
-              key: process.env.JIRA_PROJECT_KEY || "SCRUM",
+              key: project_key || process.env.JIRA_PROJECT_KEY || "SCRUM",
             },
             summary: `${ticketKey} ${summary}`,
             description: formatDescription(summary), // Use story title as description
@@ -407,7 +499,8 @@ export function registerJiraTools(server: McpServer) {
     "search-tickets",
     "Search for jira tickets by issue type",
     {
-      issue_type: z.enum(["Bug", "Task", "Story", "Test"]),
+      // @ts-ignore TS2589 - MCP SDK deep type instantiation
+      issue_type: z.enum(["Bug", "Task", "Story", "Test", "Epic"]),
       max_results: z.number().min(1).max(50).default(10).optional(),
       additional_criteria: z.string().optional(), // For additional JQL criteria
     },
@@ -484,7 +577,16 @@ export function registerJiraTools(server: McpServer) {
       story_points: z.number().optional(),
       sprint: z.string().optional(),
       story_readiness: z.enum(["Yes", "No"]).optional(),
-      assignee: z.string().optional().describe("Account ID or 'unassigned' to remove assignee"),
+      crisis: z.enum(["Yes", "No"]).optional().describe("Crisis field"),
+      initiative_type: z
+        .string()
+        .optional()
+        .describe("Initiative Type value"),
+      product_name: z.string().optional().describe("Product Name value"),
+      assignee: z
+        .string()
+        .optional()
+        .describe("Account ID or 'unassigned' to remove assignee"),
       priority: z.enum(["Highest", "High", "Medium", "Low", "Lowest"]).optional(),
       labels: z.array(z.string()).optional().describe("Replaces existing labels"),
       components: z.array(z.string()).optional().describe("Component names"),
@@ -499,6 +601,9 @@ export function registerJiraTools(server: McpServer) {
       story_points,
       sprint,
       story_readiness,
+      crisis,
+      initiative_type,
+      product_name,
       assignee,
       priority,
       labels,
@@ -541,19 +646,58 @@ export function registerJiraTools(server: McpServer) {
         payload.fields[storyPointsField] = story_points;
       }
 
-      // Add sprint if provided
+      // Add sprint if provided (Jira expects numeric sprint ID)
       if (sprint !== undefined) {
-        payload.fields["customfield_10020"] = [{ name: sprint }];
+        const sprintId = typeof sprint === 'string' ? parseInt(sprint, 10) : sprint;
+        payload.fields["customfield_10020"] = sprintId;
       }
 
       // Add story readiness if provided
       if (story_readiness !== undefined) {
-        const storyReadinessId = story_readiness === "Yes" ? "18256" : "18257";
-        payload.fields["customfield_10596"] = {
+        const storyReadinessId =
+          story_readiness === "Yes"
+            ? storyReadinessYesId
+            : storyReadinessNoId;
+        payload.fields[storyReadinessField] = {
           self: `https://${process.env.JIRA_HOST}/rest/api/3/customFieldOption/${storyReadinessId}`,
           value: story_readiness,
           id: storyReadinessId,
         };
+      }
+
+      // Add crisis if provided
+      if (crisis !== undefined) {
+        const crisisId = crisis === "Yes" ? crisisYesId : crisisNoId;
+        payload.fields[crisisField] = {
+          self: `https://${process.env.JIRA_HOST}/rest/api/3/customFieldOption/${crisisId}`,
+          value: crisis,
+          id: crisisId,
+        };
+      }
+
+      // Add initiative type if provided
+      if (initiative_type !== undefined) {
+        payload.fields[initiativeTypeField] = {
+          self: `https://${process.env.JIRA_HOST}/rest/api/3/customFieldOption/${initiativeTypeId}`,
+          value: initiative_type,
+          id: initiativeTypeId,
+        };
+      }
+
+      // Add product name if provided
+      if (product_name !== undefined) {
+        const productField = process.env.JIRA_PRODUCT_FIELD;
+        const productId = process.env.JIRA_PRODUCT_ID;
+
+        if (productField && productId) {
+          payload.fields[productField] = [
+            {
+              self: `https://${process.env.JIRA_HOST}/rest/api/3/customFieldOption/${productId}`,
+              value: product_name,
+              id: productId,
+            },
+          ];
+        }
       }
 
       // Add assignee if provided
@@ -617,15 +761,26 @@ export function registerJiraTools(server: McpServer) {
       const updatedFields: string[] = [];
       if (summary !== undefined) updatedFields.push("summary");
       if (description !== undefined) updatedFields.push("description");
-      if (acceptance_criteria !== undefined) updatedFields.push("acceptance_criteria");
-      if (story_points !== undefined) updatedFields.push(`story_points: ${story_points}`);
+      if (acceptance_criteria !== undefined)
+        updatedFields.push("acceptance_criteria");
+      if (story_points !== undefined)
+        updatedFields.push(`story_points: ${story_points}`);
       if (sprint !== undefined) updatedFields.push(`sprint: ${sprint}`);
-      if (story_readiness !== undefined) updatedFields.push(`story_readiness: ${story_readiness}`);
+      if (story_readiness !== undefined)
+        updatedFields.push(`story_readiness: ${story_readiness}`);
+      if (crisis !== undefined) updatedFields.push(`crisis: ${crisis}`);
+      if (initiative_type !== undefined)
+        updatedFields.push(`initiative_type: ${initiative_type}`);
+      if (product_name !== undefined)
+        updatedFields.push(`product_name: ${product_name}`);
       if (assignee !== undefined) updatedFields.push(`assignee: ${assignee}`);
       if (priority !== undefined) updatedFields.push(`priority: ${priority}`);
-      if (labels !== undefined) updatedFields.push(`labels: [${labels.join(", ")}]`);
-      if (components !== undefined) updatedFields.push(`components: [${components.join(", ")}]`);
-      if (fix_versions !== undefined) updatedFields.push(`fix_versions: [${fix_versions.join(", ")}]`);
+      if (labels !== undefined)
+        updatedFields.push(`labels: [${labels.join(", ")}]`);
+      if (components !== undefined)
+        updatedFields.push(`components: [${components.join(", ")}]`);
+      if (fix_versions !== undefined)
+        updatedFields.push(`fix_versions: [${fix_versions.join(", ")}]`);
       if (due_date !== undefined) updatedFields.push(`due_date: ${due_date}`);
 
       return {
