@@ -45,6 +45,7 @@ export function registerJiraTools(server: McpServer) {
     process.env.JIRA_INITIATIVE_TYPE_VALUE || "CNR";
 
   // Create ticket tool
+  // @ts-ignore TS2589 - MCP SDK deep type instantiation
   server.tool(
     "create-ticket",
     "Create a jira ticket",
@@ -362,6 +363,7 @@ export function registerJiraTools(server: McpServer) {
   );
 
   // Link tickets tool
+  // @ts-ignore TS2589 - MCP SDK deep type instantiation
   server.tool(
     "link-tickets",
     "Link two jira tickets",
@@ -410,6 +412,7 @@ export function registerJiraTools(server: McpServer) {
   );
 
   // Get ticket tool
+  // @ts-ignore TS2589 - MCP SDK deep type instantiation
   server.tool(
     "get-ticket",
     "Get a jira ticket",
@@ -566,6 +569,7 @@ export function registerJiraTools(server: McpServer) {
   );
 
   // Update ticket tool (enhanced with additional fields)
+  // @ts-ignore TS2589 - MCP SDK deep type instantiation
   server.tool(
     "update-ticket",
     "Update an existing jira ticket with various fields",
@@ -795,6 +799,7 @@ export function registerJiraTools(server: McpServer) {
   );
 
   // Add comment tool
+  // @ts-ignore TS2589 - MCP SDK deep type instantiation
   server.tool(
     "add-comment",
     "Add a comment to a JIRA ticket",
@@ -833,6 +838,7 @@ export function registerJiraTools(server: McpServer) {
   );
 
   // List comments tool
+  // @ts-ignore TS2589 - MCP SDK deep type instantiation
   server.tool(
     "list-comments",
     "List comments on a JIRA ticket",
@@ -889,6 +895,7 @@ export function registerJiraTools(server: McpServer) {
   );
 
   // Transition ticket tool
+  // @ts-ignore TS2589 - MCP SDK deep type instantiation
   server.tool(
     "transition-ticket",
     "Transition a JIRA ticket to a different status",
@@ -1006,6 +1013,7 @@ export function registerJiraTools(server: McpServer) {
   );
 
   // Assign ticket tool
+  // @ts-ignore TS2589 - MCP SDK deep type instantiation
   server.tool(
     "assign-ticket",
     "Assign or unassign a JIRA ticket",
@@ -1048,6 +1056,7 @@ export function registerJiraTools(server: McpServer) {
   );
 
   // Add watcher tool
+  // @ts-ignore TS2589 - MCP SDK deep type instantiation
   server.tool(
     "add-watcher",
     "Add a watcher to a JIRA ticket",
@@ -1085,6 +1094,7 @@ export function registerJiraTools(server: McpServer) {
   );
 
   // Remove watcher tool
+  // @ts-ignore TS2589 - MCP SDK deep type instantiation
   server.tool(
     "remove-watcher",
     "Remove a watcher from a JIRA ticket",

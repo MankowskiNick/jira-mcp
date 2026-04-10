@@ -654,6 +654,7 @@ async function searchJiraTickets(
 }
 
 // Register JIRA tools
+// @ts-ignore TS2589 - MCP SDK deep type instantiation
 server.tool(
   "create-ticket",
   "Create a jira ticket",
@@ -928,6 +929,7 @@ server.tool(
   }
 );
 
+// @ts-ignore TS2589 - MCP SDK deep type instantiation
 server.tool(
   "link-tickets",
   "Link two jira tickets",
@@ -975,6 +977,7 @@ server.tool(
   }
 );
 
+// @ts-ignore TS2589 - MCP SDK deep type instantiation
 server.tool(
   "get-ticket",
   "Get a jira ticket",
@@ -1059,10 +1062,12 @@ server.tool(
   }
 );
 
+// @ts-ignore TS2589 - MCP SDK deep type instantiation
 server.tool(
   "search-tickets",
   "Search for jira tickets by issue type",
   {
+    // @ts-ignore TS2589 - MCP SDK deep type instantiation
     issue_type: z.enum(["Bug", "Task", "Story", "Test", "Epic"]),
     max_results: z.number().min(1).max(50).default(10).optional(),
     additional_criteria: z.string().optional(), // For additional JQL criteria
@@ -1128,6 +1133,7 @@ server.tool(
   }
 );
 
+// @ts-ignore TS2589 - MCP SDK deep type instantiation
 server.tool(
   "search-tickets-jql",
   "Search for jira tickets using custom JQL query",
@@ -1254,6 +1260,7 @@ async function getJiraIssueId(
 }
 
 // Register new tool for updating tickets
+// @ts-ignore TS2589 - MCP SDK deep type instantiation
 server.tool(
   "update-ticket",
   "Update an existing jira ticket",
@@ -1341,6 +1348,7 @@ server.tool(
 );
 
 // Register new tool for getting Zephyr test steps
+// @ts-ignore TS2589 - MCP SDK deep type instantiation
 server.tool(
   "get-test-steps",
   "Get test steps from a test ticket via Zephyr integration",
@@ -1437,6 +1445,7 @@ server.tool(
 );
 
 // Register new tool for adding test steps
+// @ts-ignore TS2589 - MCP SDK deep type instantiation
 server.tool(
   "add-test-steps",
   "Add test steps to a test ticket via Zephyr integration",

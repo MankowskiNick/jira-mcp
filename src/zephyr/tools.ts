@@ -6,6 +6,7 @@ import { getJiraIssueId } from "../utils.js";
 // Register Zephyr tools on the provided server instance
 export function registerZephyrTools(server: McpServer) {
   // Get test steps tool
+  // @ts-ignore TS2589 - MCP SDK deep type instantiation
   server.tool(
     "get-test-steps",
     "Get test steps from a test ticket via Zephyr integration",
@@ -102,6 +103,7 @@ export function registerZephyrTools(server: McpServer) {
   );
 
   // Add test steps tool
+  // @ts-ignore TS2589 - MCP SDK deep type instantiation
   server.tool(
     "add-test-steps",
     "Add test steps to a test ticket via Zephyr integration",
