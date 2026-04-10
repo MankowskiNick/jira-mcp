@@ -102,9 +102,114 @@ export async function createJiraTicket(
         response.statusText
       );
 
-      // Try to extract more detailed error information
-      let errorMessage = `Status: ${response.status} ${response.statusText}`;
+      // Check if it's a custom field validation error
+      if (response.status === 400 && responseData.errors) {
+        const productField = process.env.JIRA_PRODUCT_FIELD;
+        const categoryField = process.env.JIRA_CATEGORY_FIELD;
 
+        const hasProductFieldError = productField && responseData.errors[productField];
+        const hasCategoryFieldError = categoryField && responseData.errors[categoryField];
+
+        // Handle required product field error with format retries
+        if (hasProductFieldError) {
+          const errorMessage = responseData.errors[productField];
+          console.error(`Product field error: ${errorMessage}`);
+
+          const productValue = process.env.JIRA_PRODUCT_VALUE;
+          const productId = process.env.JIRA_PRODUCT_ID;
+
+          if (productValue && productId) {
+            console.error("Retrying with alternative product field formats...");
+
+            // Try format 1: Just the ID as string
+            let retryPayload = JSON.parse(JSON.stringify(payload));
+            retryPayload.fields[productField] = productId;
+            let retryResponse = await fetch(jiraUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Basic ${auth}` },
+              body: JSON.stringify(retryPayload),
+            });
+            if (retryResponse.ok) {
+              const retryData = (await retryResponse.json()) as JiraCreateResponse;
+              console.error("Ticket created with product field as ID string");
+              return { success: true, data: retryData };
+            }
+
+            // Try format 2: Array with just ID
+            retryPayload = JSON.parse(JSON.stringify(payload));
+            retryPayload.fields[productField] = [{ id: productId }];
+            retryResponse = await fetch(jiraUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Basic ${auth}` },
+              body: JSON.stringify(retryPayload),
+            });
+            if (retryResponse.ok) {
+              const retryData = (await retryResponse.json()) as JiraCreateResponse;
+              console.error("Ticket created with product field as array with ID");
+              return { success: true, data: retryData };
+            }
+
+            // Try format 3: Array with just value
+            retryPayload = JSON.parse(JSON.stringify(payload));
+            retryPayload.fields[productField] = [{ value: productValue }];
+            retryResponse = await fetch(jiraUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Basic ${auth}` },
+              body: JSON.stringify(retryPayload),
+            });
+            if (retryResponse.ok) {
+              const retryData = (await retryResponse.json()) as JiraCreateResponse;
+              console.error("Ticket created with product field as array with value");
+              return { success: true, data: retryData };
+            }
+
+            console.error("All product field format retries failed");
+          }
+
+          // If required field and all retries failed, return detailed error
+          if (errorMessage.toLowerCase().includes("required")) {
+            return {
+              success: false,
+              data: responseData,
+              errorMessage: `Required field validation failed: ${errorMessage}. The product ID "${productId}" or value "${productValue}" may be invalid.`,
+            };
+          }
+        }
+
+        // For non-required field errors, try removing problematic fields
+        if (
+          (hasProductFieldError && !responseData.errors[productField!].toLowerCase().includes("required")) ||
+          hasCategoryFieldError
+        ) {
+          console.error("Retrying without problematic custom fields...");
+          const retryPayload = JSON.parse(JSON.stringify(payload));
+
+          if (hasProductFieldError && !responseData.errors[productField!].toLowerCase().includes("required")) {
+            delete retryPayload.fields[productField!];
+            console.error(`Removed problematic product field: ${productField}`);
+          }
+          if (hasCategoryFieldError) {
+            delete retryPayload.fields[categoryField!];
+            console.error(`Removed problematic category field: ${categoryField}`);
+          }
+
+          const retryResponse = await fetch(jiraUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Basic ${auth}` },
+            body: JSON.stringify(retryPayload),
+          });
+          const retryData = (await retryResponse.json()) as JiraCreateResponse;
+
+          if (retryResponse.ok) {
+            console.error("Ticket created after removing problematic custom fields");
+            return { success: true, data: retryData };
+          }
+          console.error("Retry also failed:", JSON.stringify(retryData, null, 2));
+        }
+      }
+
+      // Default error extraction
+      let errorMessage = `Status: ${response.status} ${response.statusText}`;
       if (responseData.errorMessages && responseData.errorMessages.length > 0) {
         errorMessage = responseData.errorMessages.join(", ");
       } else if (responseData.errors) {
@@ -195,7 +300,7 @@ export async function searchJiraTickets(
 }> {
   const jiraUrl = `https://${
     process.env.JIRA_HOST
-  }/rest/api/3/search?jql=${encodeURIComponent(jql)}&maxResults=${maxResults}`;
+  }/rest/api/3/search/jql?jql=${encodeURIComponent(jql)}&maxResults=${maxResults}`;
 
   console.error("JIRA Search URL:", jiraUrl);
   console.error("JIRA Search JQL:", jql);

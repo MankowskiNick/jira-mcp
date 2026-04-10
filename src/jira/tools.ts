@@ -195,12 +195,17 @@ export function registerJiraTools(server: McpServer) {
         payload.fields.labels = ["QA-Testable"];
       }
 
-      // Add parent epic if provided
+      // Add parent epic/parent link if provided
       if (parent_epic !== undefined) {
-        // Using environment variable for epic link field
-        const epicLinkField =
-          process.env.JIRA_EPIC_LINK_FIELD || "customfield_10014";
-        payload.fields[epicLinkField] = parent_epic;
+        if (issue_type === "Epic") {
+          // For Epic creation, set parent to Initiative key via standard parent field
+          payload.fields.parent = { key: parent_epic };
+        } else {
+          // For Stories/Tasks/Bugs, set Epic Link
+          const epicLinkField =
+            process.env.JIRA_EPIC_LINK_FIELD || "customfield_10014";
+          payload.fields[epicLinkField] = parent_epic;
+        }
       }
 
       // Add sprint if provided (Jira expects numeric sprint ID)
@@ -560,6 +565,66 @@ export function registerJiraTools(server: McpServer) {
           {
             type: "text" as const,
             text: `Found ${result.data.total} ${issue_type} tickets (showing ${
+              tickets.length
+            }):\n\n${JSON.stringify(tickets, null, 2)}`,
+          },
+        ],
+      };
+    }
+  );
+
+  // Search tickets by JQL tool
+  // @ts-ignore TS2589 - MCP SDK deep type instantiation
+  server.tool(
+    "search-tickets-jql",
+    "Search for jira tickets using custom JQL query",
+    {
+      jql: z.string().min(1, "JQL query is required"),
+      max_results: z.number().min(1).max(50).default(10).optional(),
+    },
+    async ({ jql, max_results = 10 }) => {
+      const auth = Buffer.from(
+        `${process.env.JIRA_USERNAME}:${process.env.JIRA_API_TOKEN}`
+      ).toString("base64");
+
+      const result = await searchJiraTickets(jql, max_results, auth);
+
+      if (!result.success) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Error searching tickets: ${result.errorMessage}`,
+            },
+          ],
+        };
+      }
+
+      if (!result.data.issues || result.data.issues.length === 0) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `No tickets found matching the JQL query: ${jql}`,
+            },
+          ],
+        };
+      }
+
+      const tickets = result.data.issues.map((issue) => ({
+        key: issue.key,
+        summary: issue.fields.summary,
+        status: issue.fields.status?.name || "Unknown",
+        priority: issue.fields.priority?.name || "Unknown",
+        issuetype: issue.fields.issuetype?.name || "Unknown",
+        description: issue.fields.description || "No description",
+      }));
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Found ${result.data.total || tickets.length} ticket(s) (showing ${
               tickets.length
             }):\n\n${JSON.stringify(tickets, null, 2)}`,
           },
