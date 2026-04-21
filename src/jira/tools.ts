@@ -67,6 +67,10 @@ export function registerJiraTools(server: McpServer) {
         .string()
         .optional()
         .describe("Account ID to assign the ticket to"),
+      developer: z
+        .string()
+        .optional()
+        .describe("Account ID of the developer to assign"),
       labels: z.array(z.string()).optional().describe("Labels to add to the ticket"),
       components: z.array(z.string()).optional().describe("Component names"),
       priority: z.enum(["Highest", "High", "Medium", "Low", "Lowest"]).optional(),
@@ -90,6 +94,7 @@ export function registerJiraTools(server: McpServer) {
       story_readiness,
       project_key,
       assignee,
+      developer,
       labels: inputLabels,
       components,
       priority,
@@ -181,6 +186,12 @@ export function registerJiraTools(server: McpServer) {
               id: categoryOptionId,
             };
           }
+        }
+
+        if (developer !== undefined) {
+          const developerField =
+            process.env.JIRA_DEVELOPER_FIELD || "customfield_10461";
+          payload.fields[developerField] = { accountId: developer };
         }
       }
 
@@ -307,6 +318,9 @@ export function registerJiraTools(server: McpServer) {
 
       if (assignee !== undefined) {
         responseText += `, assignee: ${assignee}`;
+      }
+      if (developer !== undefined) {
+        responseText += `, developer: ${developer}`;
       }
       if (priority !== undefined) {
         responseText += `, priority: ${priority}`;
@@ -656,6 +670,10 @@ export function registerJiraTools(server: McpServer) {
         .string()
         .optional()
         .describe("Account ID or 'unassigned' to remove assignee"),
+      developer: z
+        .string()
+        .optional()
+        .describe("Account ID of the developer (or 'unassigned' to clear)"),
       priority: z.enum(["Highest", "High", "Medium", "Low", "Lowest"]).optional(),
       labels: z.array(z.string()).optional().describe("Replaces existing labels"),
       components: z.array(z.string()).optional().describe("Component names"),
@@ -674,6 +692,7 @@ export function registerJiraTools(server: McpServer) {
       initiative_type,
       product_name,
       assignee,
+      developer,
       priority,
       labels,
       components,
@@ -775,6 +794,13 @@ export function registerJiraTools(server: McpServer) {
           assignee === "unassigned" ? null : { accountId: assignee };
       }
 
+      if (developer !== undefined) {
+        const developerField =
+          process.env.JIRA_DEVELOPER_FIELD || "customfield_10461";
+        payload.fields[developerField] =
+          developer === "unassigned" ? null : { accountId: developer };
+      }
+
       // Add priority if provided
       if (priority !== undefined) {
         payload.fields.priority = { name: priority };
@@ -843,6 +869,7 @@ export function registerJiraTools(server: McpServer) {
       if (product_name !== undefined)
         updatedFields.push(`product_name: ${product_name}`);
       if (assignee !== undefined) updatedFields.push(`assignee: ${assignee}`);
+      if (developer !== undefined) updatedFields.push(`developer: ${developer}`);
       if (priority !== undefined) updatedFields.push(`priority: ${priority}`);
       if (labels !== undefined)
         updatedFields.push(`labels: [${labels.join(", ")}]`);
