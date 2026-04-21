@@ -44,3 +44,7 @@ ValidationEpic.md
 /*.mjs
 !/jest.config.js
 !/eslint.config.js
+
+# Agent/tooling artifacts
+.codex
+.orchestrator/
