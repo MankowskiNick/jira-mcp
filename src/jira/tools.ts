@@ -10,9 +10,13 @@ import {
   getJiraTransitions,
   transitionJiraTicket,
   assignJiraTicket,
+  listJiraBoards,
+  listJiraSprints,
+  moveIssuesToSprint,
   addJiraWatcher,
   removeJiraWatcher,
 } from "./api.js";
+import type { JiraBoard, JiraSprint } from "./types.js";
 import {
   formatDescription,
   formatAcceptanceCriteria,
@@ -26,6 +30,170 @@ import {
 
 // Check if auto-creation of test tickets is enabled (default to true)
 const autoCreateTestTickets = process.env.AUTO_CREATE_TEST_TICKETS !== "false";
+const sprintIdDescription =
+  "Numeric sprint ID. Use list-sprints to discover IDs, or use move-to-sprint which accepts sprint names.";
+
+function textResponse(text: string) {
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text,
+      },
+    ],
+  };
+}
+
+function parseSprintId(sprint: string): number | null {
+  const sprintId = parseInt(sprint, 10);
+  return Number.isNaN(sprintId) ? null : sprintId;
+}
+
+function formatBoardProject(board: JiraBoard): string {
+  return board.location?.projectKey || board.location?.projectName || "N/A";
+}
+
+function formatBoardRows(boards: JiraBoard[]): string {
+  return boards
+    .map((board) => `${board.id} | ${board.name} | ${board.type} | ${formatBoardProject(board)}`)
+    .join("\n");
+}
+
+function formatSprintRows(sprints: JiraSprint[]): string {
+  return sprints
+    .map(
+      (sprint) =>
+        `${sprint.id} | ${sprint.name} | ${sprint.state} | ${sprint.startDate || "N/A"} | ${sprint.endDate || "N/A"}`
+    )
+    .join("\n");
+}
+
+type SprintMatch = {
+  board: JiraBoard;
+  sprint: JiraSprint;
+};
+
+async function resolveCandidateBoards(
+  auth: string,
+  boardId?: number
+): Promise<{ success: true; boards: JiraBoard[] } | { success: false; message: string }> {
+  const options = boardId
+    ? {}
+    : { projectKeyOrId: process.env.JIRA_PROJECT_KEY };
+  const result = await listJiraBoards(auth, options);
+
+  if (!result.success) {
+    return { success: false, message: `Error listing boards: ${result.errorMessage}` };
+  }
+
+  const boards = (result.data || []).filter(
+    (board) => boardId === undefined || board.id === boardId
+  );
+
+  if (boards.length === 0) {
+    const scope = boardId
+      ? ` with id ${boardId}`
+      : process.env.JIRA_PROJECT_KEY
+        ? ` for project ${process.env.JIRA_PROJECT_KEY}`
+        : "";
+    return { success: false, message: `No boards found${scope}.` };
+  }
+
+  if (boardId === undefined && boards.length > 1) {
+    return {
+      success: false,
+      message: `Multiple boards found; pass board_id to choose one:\nid | name | type | project\n${formatBoardRows(boards)}`,
+    };
+  }
+
+  return { success: true, boards };
+}
+
+function selectSprintMatch(
+  sprintName: string,
+  matches: SprintMatch[]
+): SprintMatch | string {
+  const exactMatches = matches.filter((match) => match.sprint.name === sprintName);
+  const selectedMatches =
+    exactMatches.length > 0
+      ? exactMatches
+      : matches.filter(
+          (match) => match.sprint.name.toLowerCase() === sprintName.toLowerCase()
+        );
+
+  if (selectedMatches.length === 1) {
+    return selectedMatches[0];
+  }
+
+  if (selectedMatches.length > 1) {
+    const options = selectedMatches
+      .map((match) => `${match.sprint.name} (id: ${match.sprint.id}, board: ${match.board.id})`)
+      .join(", ");
+    return `Sprint name "${sprintName}" matched multiple sprints: ${options}`;
+  }
+
+  return `No sprint named "${sprintName}" found.`;
+}
+
+async function resolveSprintByName(
+  auth: string,
+  sprintName: string,
+  boardId?: number
+): Promise<{ success: true; match: SprintMatch } | { success: false; message: string }> {
+  const boardsResult = await resolveCandidateBoards(auth, boardId);
+  if (!boardsResult.success) {
+    return boardsResult;
+  }
+
+  const matches: SprintMatch[] = [];
+  const searchedNames: string[] = [];
+
+  for (const board of boardsResult.boards) {
+    const sprintsResult = await listJiraSprints(auth, board.id, {
+      state: "active,future,closed",
+    });
+    if (!sprintsResult.success) {
+      return {
+        success: false,
+        message: `Error listing sprints for board ${board.id}: ${sprintsResult.errorMessage}`,
+      };
+    }
+
+    const sprints = sprintsResult.data || [];
+    searchedNames.push(...sprints.map((sprint) => `${sprint.name} (id: ${sprint.id})`));
+    const eligibleSprints =
+      sprintName.toLowerCase() === "active"
+        ? sprints.filter((sprint) => sprint.state === "active")
+        : sprints;
+    matches.push(...eligibleSprints.map((sprint) => ({ board, sprint })));
+  }
+
+  if (sprintName.toLowerCase() === "active") {
+    if (matches.length === 1) {
+      return { success: true, match: matches[0] };
+    }
+
+    if (matches.length > 1) {
+      const options = matches
+        .map((match) => `${match.sprint.name} (id: ${match.sprint.id}, board: ${match.board.id})`)
+        .join(", ");
+      return {
+        success: false,
+        message: `Multiple active sprints found: ${options}`,
+      };
+    }
+
+    return { success: false, message: "No active sprint found." };
+  }
+
+  const selected = selectSprintMatch(sprintName, matches);
+  if (typeof selected !== "string") {
+    return { success: true, match: selected };
+  }
+
+  const searched = searchedNames.length > 0 ? searchedNames.join(", ") : "none";
+  return { success: false, message: `${selected} Searched sprints: ${searched}` };
+}
 
 // Register JIRA tools on the provided server instance
 export function registerJiraTools(server: McpServer) {
@@ -57,7 +225,7 @@ export function registerJiraTools(server: McpServer) {
       story_points: z.number().optional(),
       create_test_ticket: z.boolean().optional(),
       parent_epic: z.string().optional(),
-      sprint: z.string().optional(),
+      sprint: z.string().optional().describe(sprintIdDescription),
       story_readiness: z.enum(["Yes", "No"]).optional(),
       project_key: z
         .string()
@@ -221,8 +389,14 @@ export function registerJiraTools(server: McpServer) {
 
       // Add sprint if provided (Jira expects numeric sprint ID)
       if (sprint !== undefined) {
-        const sprintId = typeof sprint === 'string' ? parseInt(sprint, 10) : sprint;
-        payload.fields["customfield_10020"] = sprintId;
+        const sprintId = parseSprintId(sprint);
+        if (sprintId === null) {
+          return textResponse(
+            "Error: sprint must be a numeric ID. Use move-to-sprint to set a sprint by name."
+          );
+        }
+        const sprintField = process.env.JIRA_SPRINT_FIELD || "customfield_10020";
+        payload.fields[sprintField] = sprintId;
       }
 
       // Add story readiness if provided
@@ -658,7 +832,7 @@ export function registerJiraTools(server: McpServer) {
       description: z.string().optional(),
       acceptance_criteria: z.string().optional(),
       story_points: z.number().optional(),
-      sprint: z.string().optional(),
+      sprint: z.string().optional().describe(sprintIdDescription),
       story_readiness: z.enum(["Yes", "No"]).optional(),
       crisis: z.enum(["Yes", "No"]).optional().describe("Crisis field"),
       initiative_type: z
@@ -736,8 +910,14 @@ export function registerJiraTools(server: McpServer) {
 
       // Add sprint if provided (Jira expects numeric sprint ID)
       if (sprint !== undefined) {
-        const sprintId = typeof sprint === 'string' ? parseInt(sprint, 10) : sprint;
-        payload.fields["customfield_10020"] = sprintId;
+        const sprintId = parseSprintId(sprint);
+        if (sprintId === null) {
+          return textResponse(
+            "Error: sprint must be a numeric ID. Use move-to-sprint to set a sprint by name."
+          );
+        }
+        const sprintField = process.env.JIRA_SPRINT_FIELD || "customfield_10020";
+        payload.fields[sprintField] = sprintId;
       }
 
       // Add story readiness if provided
@@ -1144,6 +1324,125 @@ export function registerJiraTools(server: McpServer) {
           },
         ],
       };
+    }
+  );
+
+  // List boards tool
+  // @ts-ignore TS2589 - MCP SDK deep type instantiation
+  server.tool(
+    "list-boards",
+    "List JIRA Agile boards",
+    {
+      project_key: z.string().optional().describe("Project key to filter boards"),
+      type: z.enum(["scrum", "kanban"]).optional().describe("Board type"),
+    },
+    async ({ project_key, type }) => {
+      const auth = Buffer.from(
+        `${process.env.JIRA_USERNAME}:${process.env.JIRA_API_TOKEN}`
+      ).toString("base64");
+
+      const result = await listJiraBoards(auth, {
+        projectKeyOrId: project_key,
+        type,
+      });
+
+      if (!result.success) {
+        return textResponse(`Error listing boards: ${result.errorMessage}`);
+      }
+
+      const boards = result.data || [];
+      if (boards.length === 0) {
+        return textResponse("No boards found.");
+      }
+
+      return textResponse(`id | name | type | project\n${formatBoardRows(boards)}`);
+    }
+  );
+
+  // List sprints tool
+  // @ts-ignore TS2589 - MCP SDK deep type instantiation
+  server.tool(
+    "list-sprints",
+    "List JIRA Agile sprints for a board",
+    {
+      board_id: z.number().int().positive().describe("JIRA Agile board ID"),
+      state: z
+        .string()
+        .optional()
+        .describe("Comma-separated sprint states (default: active,future)"),
+    },
+    async ({ board_id, state }) => {
+      const auth = Buffer.from(
+        `${process.env.JIRA_USERNAME}:${process.env.JIRA_API_TOKEN}`
+      ).toString("base64");
+
+      const result = await listJiraSprints(auth, board_id, {
+        state: state || "active,future",
+      });
+
+      if (!result.success) {
+        return textResponse(`Error listing sprints: ${result.errorMessage}`);
+      }
+
+      const sprints = result.data || [];
+      if (sprints.length === 0) {
+        return textResponse(`No sprints found for board ${board_id}.`);
+      }
+
+      return textResponse(
+        `id | name | state | startDate | endDate\n${formatSprintRows(sprints)}`
+      );
+    }
+  );
+
+  // Move to sprint tool
+  // @ts-ignore TS2589 - MCP SDK deep type instantiation
+  server.tool(
+    "move-to-sprint",
+    "Move a JIRA ticket to a sprint by ID, name, or active sprint",
+    {
+      ticket_key: z.string().min(1, "Ticket key is required"),
+      sprint: z
+        .string()
+        .min(1, "Sprint is required")
+        .describe('Numeric sprint ID, sprint name, or the literal "active"'),
+      board_id: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Board ID required when name resolution is ambiguous"),
+    },
+    async ({ ticket_key, sprint, board_id }) => {
+      const auth = Buffer.from(
+        `${process.env.JIRA_USERNAME}:${process.env.JIRA_API_TOKEN}`
+      ).toString("base64");
+
+      const sprintId = parseSprintId(sprint);
+      if (sprintId !== null) {
+        const result = await moveIssuesToSprint(auth, sprintId, [ticket_key]);
+        if (!result.success) {
+          return textResponse(`Error moving ticket to sprint: ${result.errorMessage}`);
+        }
+
+        return textResponse(`Successfully moved ${ticket_key} to sprint ${sprintId}`);
+      }
+
+      const resolution = await resolveSprintByName(auth, sprint, board_id);
+      if (!resolution.success) {
+        return textResponse(`Error resolving sprint: ${resolution.message}`);
+      }
+
+      const result = await moveIssuesToSprint(auth, resolution.match.sprint.id, [
+        ticket_key,
+      ]);
+      if (!result.success) {
+        return textResponse(`Error moving ticket to sprint: ${result.errorMessage}`);
+      }
+
+      return textResponse(
+        `Successfully moved ${ticket_key} to sprint ${resolution.match.sprint.name} (id: ${resolution.match.sprint.id}, board: ${resolution.match.board.id})`
+      );
     }
   );
 

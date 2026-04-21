@@ -86,3 +86,22 @@ export type JiraTransitionsResponse = {
   errorMessages?: string[];
   transitions?: JiraTransition[];
 };
+
+export interface JiraBoard {
+  id: number;
+  name: string;
+  type: string;
+  location?: {
+    projectKey?: string;
+    projectName?: string;
+  };
+}
+
+export interface JiraSprint {
+  id: number;
+  name: string;
+  state: string;
+  startDate?: string;
+  endDate?: string;
+  originBoardId?: number;
+}

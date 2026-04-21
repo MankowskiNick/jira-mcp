@@ -35,6 +35,9 @@ The JIRA MCP project is a Node.js/TypeScript application that provides a Model C
   - [get-ticket](#get-ticket)
   - [search-tickets](#search-tickets)
   - [update-ticket](#update-ticket)
+  - [list-boards](#list-boards)
+  - [list-sprints](#list-sprints)
+  - [move-to-sprint](#move-to-sprint)
   - [link-tickets](#link-tickets)
   - [get-test-steps](#get-test-steps)
   - [add-test-steps](#add-test-steps)
@@ -123,6 +126,7 @@ Add the following configuration to your Claude configuration file:
 
         "JIRA_ACCEPTANCE_CRITERIA_FIELD": "customfield_10429",
         "JIRA_STORY_POINTS_FIELD": "customfield_10040",
+        "JIRA_SPRINT_FIELD": "customfield_10020",
         "JIRA_EPIC_LINK_FIELD": "customfield_10014",
 
         "JIRA_PRODUCT_FIELD": "customfield_10757",
@@ -171,6 +175,7 @@ The following environment variables allow you to configure custom fields without
 
 - `JIRA_ACCEPTANCE_CRITERIA_FIELD`: The field ID for acceptance criteria (default: "customfield_10429")
 - `JIRA_STORY_POINTS_FIELD`: The field ID for story points (default: "customfield_10040")
+- `JIRA_SPRINT_FIELD`: The field ID for sprint assignment (default: "customfield_10020")
 - `JIRA_EPIC_LINK_FIELD`: The field ID for epic links (default: "customfield_10014")
 
 #### Product Field Configuration (Optional)
@@ -251,7 +256,7 @@ Creates a new JIRA ticket.
 - `story_points`: Story points for the ticket (optional, Fibonacci sequence: 1, 2, 3, 5, 8, 13, etc.)
 - `create_test_ticket`: Override the default setting for automatically creating a linked Test ticket (optional, boolean)
 - `parent_epic`: Key of the parent epic to link this ticket to (optional, e.g., "PROJ-123")
-- `sprint`: The name of the sprint to assign the ticket to (optional, e.g., "2025_C1_S07")
+- `sprint`: Numeric sprint ID to assign the ticket to (optional; use `list-sprints` to discover IDs or `move-to-sprint` to set by name)
 - `story_readiness`: Whether the story is ready for development (optional, "Yes" or "No")
 - `crisis`: Whether this ticket represents a crisis/urgent issue (optional, "Yes" or "No")
 
@@ -272,7 +277,7 @@ When creating a Story ticket with story points:
   "acceptance_criteria": "- Users can log in with email and password\n- Password reset functionality works via email",
   "story_points": 5,
   "parent_epic": "PROJ-100",
-  "sprint": "2025_C1_S07",
+  "sprint": "123",
   "story_readiness": "Yes"
 }
 ```
@@ -324,7 +329,7 @@ Updates an existing JIRA ticket with new field values.
 **Parameters:**
 
 - `ticket_key`: The key of the JIRA ticket to update (required, e.g., "PROJ-123")
-- `sprint`: The name of the sprint to assign the ticket to (optional, e.g., "2025_C1_S07")
+- `sprint`: Numeric sprint ID to assign the ticket to (optional; use `list-sprints` to discover IDs or `move-to-sprint` to set by name)
 - `story_readiness`: Whether the story is ready for development (optional, "Yes" or "No")
 
 **Example:**
@@ -332,12 +337,50 @@ Updates an existing JIRA ticket with new field values.
 ```json
 {
   "ticket_key": "PROJ-123",
-  "sprint": "2025_C1_S07",
+  "sprint": "123",
   "story_readiness": "Yes"
 }
 ```
 
 This tool allows you to update existing tickets with sprint information and story readiness status. At least one field must be provided for the update to proceed.
+
+### list-boards
+
+Lists Jira Agile boards.
+
+**Parameters:**
+
+- `project_key`: Project key to filter boards (optional)
+- `type`: Board type, either `scrum` or `kanban` (optional)
+
+### list-sprints
+
+Lists sprints for a Jira Agile board.
+
+**Parameters:**
+
+- `board_id`: Jira Agile board ID (required)
+- `state`: Comma-separated sprint states (optional, default: `active,future`)
+
+### move-to-sprint
+
+Moves a ticket to a sprint using the Jira Agile API.
+
+**Parameters:**
+
+- `ticket_key`: The key of the JIRA ticket to move (required)
+- `sprint`: Numeric sprint ID, exact sprint name, case-insensitive sprint name, or `active` for the single active sprint on the resolved board (required)
+- `board_id`: Board ID to use when resolving a sprint name for projects with multiple boards (optional)
+
+**Example:**
+
+```json
+{
+  "ticket_key": "PROJ-123",
+  "sprint": "active",
+  "board_id": 42
+}
+```
 
 ### link-tickets
 
