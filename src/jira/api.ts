@@ -5,7 +5,93 @@ import {
   JiraCommentResponse,
   JiraCommentsListResponse,
   JiraTransitionsResponse,
+  JiraBoard,
+  JiraSprint,
 } from "./types.js";
+
+type JiraApiResult<T> = {
+  success: boolean;
+  data?: T;
+  errorMessage?: string;
+};
+
+type JiraListResponse<T> = {
+  values?: T[];
+  isLast?: boolean;
+  startAt?: number;
+  maxResults?: number;
+  total?: number;
+};
+
+async function readJiraError(
+  response: Awaited<ReturnType<typeof fetch>>,
+  context: string
+): Promise<string> {
+  let errorMessage = `Status: ${response.status} ${response.statusText}`;
+
+  try {
+    const responseData = (await response.json()) as {
+      errorMessages?: string[];
+      errors?: Record<string, string>;
+    };
+    console.error(`Error ${context}:`, responseData);
+
+    if (responseData.errorMessages && responseData.errorMessages.length > 0) {
+      errorMessage = responseData.errorMessages.join(", ");
+    } else if (responseData.errors) {
+      errorMessage = JSON.stringify(responseData.errors);
+    }
+  } catch (parseError) {
+    console.error("Error parsing error response:", parseError);
+  }
+
+  return errorMessage;
+}
+
+async function fetchJiraAgileValues<T>(
+  url: URL,
+  auth: string,
+  context: string
+): Promise<JiraApiResult<T[]>> {
+  const values: T[] = [];
+  let startAt = 0;
+
+  while (true) {
+    url.searchParams.set("startAt", String(startAt));
+    url.searchParams.set("maxResults", "50");
+
+    const response = await fetch(url.toString(), {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Basic ${auth}`,
+      },
+    });
+
+    if (!response.ok) {
+      return {
+        success: false,
+        errorMessage: await readJiraError(response, context),
+      };
+    }
+
+    const responseData = (await response.json()) as JiraListResponse<T>;
+    values.push(...(responseData.values || []));
+
+    const pageSize = responseData.maxResults || 50;
+    startAt = (responseData.startAt || startAt) + pageSize;
+    if (
+      responseData.isLast ||
+      (responseData.total !== undefined && startAt >= responseData.total) ||
+      !responseData.values ||
+      responseData.values.length === 0
+    ) {
+      break;
+    }
+  }
+
+  return { success: true, data: values };
+}
 
 // Helper function to update a JIRA ticket
 export async function updateJiraTicket(
@@ -600,6 +686,103 @@ export async function assignJiraTicket(
     return { success: false, errorMessage };
   } catch (error) {
     console.error("Exception assigning ticket:", error);
+    return {
+      success: false,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+export async function listJiraBoards(
+  auth: string,
+  options: { projectKeyOrId?: string; type?: "scrum" | "kanban" } = {}
+): Promise<JiraApiResult<JiraBoard[]>> {
+  const jiraUrl = new URL(`https://${process.env.JIRA_HOST}/rest/agile/1.0/board`);
+  if (options.projectKeyOrId) {
+    jiraUrl.searchParams.set("projectKeyOrId", options.projectKeyOrId);
+  }
+  if (options.type) {
+    jiraUrl.searchParams.set("type", options.type);
+  }
+
+  console.error("JIRA Agile Boards URL:", jiraUrl.toString());
+
+  try {
+    return await fetchJiraAgileValues<JiraBoard>(
+      jiraUrl,
+      auth,
+      "listing boards"
+    );
+  } catch (error) {
+    console.error("Exception listing boards:", error);
+    return {
+      success: false,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+export async function listJiraSprints(
+  auth: string,
+  boardId: number,
+  options: { state?: string } = {}
+): Promise<JiraApiResult<JiraSprint[]>> {
+  const jiraUrl = new URL(
+    `https://${process.env.JIRA_HOST}/rest/agile/1.0/board/${boardId}/sprint`
+  );
+  jiraUrl.searchParams.set("state", options.state || "active,future");
+
+  console.error("JIRA Agile Sprints URL:", jiraUrl.toString());
+
+  try {
+    return await fetchJiraAgileValues<JiraSprint>(
+      jiraUrl,
+      auth,
+      "listing sprints"
+    );
+  } catch (error) {
+    console.error("Exception listing sprints:", error);
+    return {
+      success: false,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+export async function moveIssuesToSprint(
+  auth: string,
+  sprintId: number,
+  issueKeys: string[]
+): Promise<{
+  success: boolean;
+  errorMessage?: string;
+}> {
+  const jiraUrl = `https://${process.env.JIRA_HOST}/rest/agile/1.0/sprint/${sprintId}/issue`;
+  const payload = { issues: issueKeys };
+
+  console.error("JIRA Move To Sprint URL:", jiraUrl);
+  console.error("JIRA Move To Sprint Payload:", JSON.stringify(payload, null, 2));
+
+  try {
+    const response = await fetch(jiraUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Basic ${auth}`,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (response.status === 204) {
+      return { success: true };
+    }
+
+    return {
+      success: false,
+      errorMessage: await readJiraError(response, "moving issues to sprint"),
+    };
+  } catch (error) {
+    console.error("Exception moving issues to sprint:", error);
     return {
       success: false,
       errorMessage: error instanceof Error ? error.message : String(error),
